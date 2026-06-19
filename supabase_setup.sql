@@ -34,6 +34,15 @@ create policy "Permitir lectura pública de results" on public.results
     for select
     using (true);
 
+create policy "Permitir inserción pública de results" on public.results
+    for insert
+    with check (true);
+
+create policy "Permitir actualización pública de results" on public.results
+    for update
+    using (true)
+    with check (true);
+
 do $$
 begin
     if not exists (

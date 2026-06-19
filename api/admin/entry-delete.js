@@ -12,9 +12,19 @@ export default async function handler(req, res) {
   try {
     const body = await readJsonBody(req);
     const id = body.id;
+    const password = typeof body.password === "string" ? body.password : "";
+    const adminPassword = (process.env.ADMIN_DELETE_PASSWORD ?? "").trim();
 
     if (typeof id !== "string" && typeof id !== "number") {
       return sendJson(res, 400, { error: "Falta el identificador de la quiniela." });
+    }
+
+    if (!adminPassword) {
+      return sendJson(res, 500, { error: "Falta configurar ADMIN_DELETE_PASSWORD en Vercel." });
+    }
+
+    if (!password || password !== adminPassword) {
+      return sendJson(res, 401, { error: "Contraseña incorrecta." });
     }
 
     const supabase = getSupabaseServerClient();

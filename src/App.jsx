@@ -39,6 +39,22 @@ const saveLocalResults = (results) => {
   }
 };
 
+const saveResultsDirect = async (results) => {
+  const payload = {
+    id: 1,
+    data: results,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase.from("results").upsert(payload, {
+    onConflict: "id",
+  });
+
+  if (error) {
+    throw error;
+  }
+};
+
 // 48 teams flags dictionary
 const TEAM_FLAGS = {
   "México": "🇲🇽", "Sudáfrica": "🇿🇦", "Corea del Sur": "🇰🇷", "Chequia": "🇨🇿",
@@ -359,11 +375,17 @@ export default function App() {
       setResults(r);
       flash("✅ Resultados guardados");
     } catch (error) {
-      flash("❌ Error: " + error.message);
+      try {
+        await saveResultsDirect(r);
+        setResults(r);
+        flash("✅ Resultados guardados en Supabase");
+      } catch (directError) {
+        flash("❌ Error: " + (directError.message || error.message));
+      }
     }
   }
 
-  async function delEntry(id){
+  async function delEntry(id,password){
     if (isDemoMode) {
       const remainingEntries = entries.filter(e => e.id !== id);
       saveLocalEntries(remainingEntries);
@@ -373,7 +395,7 @@ export default function App() {
     }
 
     try {
-      await deleteEntryRemote(id);
+      await deleteEntryRemote(id, password);
       setEntries(prev=>prev.filter(e=>e.id!==id));
       flash("🗑️ Quiniela eliminada");
     } catch (error) {
@@ -883,7 +905,17 @@ function EntriesTab({entries,results,delEntry}){
                 <button 
                   className="btn" 
                   style={{background:"#ffebee",color:"#c62828",padding:"6px 10px",fontSize:11, boxShadow:"none", borderRadius:6}} 
-                  onClick={ev=>{ev.stopPropagation(); if(confirm(`¿Seguro que deseas eliminar la quiniela de ${e.name}?`)) { delEntry(e.id); } }}
+                  onClick={ev=>{
+                    ev.stopPropagation();
+                    if (!confirm(`¿Seguro que deseas eliminar la quiniela de ${e.name}?`)) {
+                      return;
+                    }
+                    const password = window.prompt("Introduce la contraseña para eliminar esta quiniela:");
+                    if (password === null) {
+                      return;
+                    }
+                    delEntry(e.id, password);
+                  }}
                 >
                   ✕
                 </button>
@@ -1178,14 +1210,16 @@ function LeaderboardTab({scores,results}){
       {/* Visual Podium for top 3 */}
       {scores.length>=2&&(
         <div style={{display:"flex",justifyContent:"center",alignItems:"flex-end",gap:16,marginBottom:32,padding:"20px 0", background:"rgba(26,122,64,0.02)", borderRadius:16, border:"1px solid rgba(26,122,64,0.05)"}}>
-          {[scores[1],scores[0],scores[2]].filter(Boolean).map((s,ii)=>{
-            const rank=ii===1?0:ii===0?1:2;
+          {[
+            { entry: scores[1], rank: 1, podiumHeight: 130 },
+            { entry: scores[0], rank: 0, podiumHeight: 170 },
+            { entry: scores[2], rank: 2, podiumHeight: 105 },
+          ].filter(({ entry }) => Boolean(entry)).map(({ entry: s, rank, podiumHeight })=>{
             const rankBackground = [
               `linear-gradient(to top, var(--accent), #ffd54f)`,
               `linear-gradient(to top, #cfd8dc, #eceff1)`,
               `linear-gradient(to top, #b0bec5, #d7ccc8)`
             ][rank];
-            const podiumHeight = [90, 125, 70][rank];
             
             return (
               <div key={s.id} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6, width:90}}>

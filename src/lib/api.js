@@ -43,9 +43,9 @@ export function saveResultsRemote(results) {
   });
 }
 
-export function deleteEntryRemote(id) {
+export function deleteEntryRemote(id, password) {
   return requestJson("/api/admin/entry-delete", {
     method: "POST",
-    body: JSON.stringify({ id }),
+    body: JSON.stringify({ id, password }),
   });
 }
