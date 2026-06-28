@@ -138,6 +138,10 @@ function formatEntryName(name) {
   return `${ENTRY_NAME_PREFIX} - ${name}`;
 }
 
+function isRound32EntryName(name) {
+  return typeof name === "string" && name.startsWith(`${ENTRY_NAME_PREFIX} - `);
+}
+
 function applyOfficialR32Matches(preds) {
   if (!preds) return preds;
   const next = { ...preds };
@@ -216,8 +220,10 @@ function scoreEntry(pred, results) {
     for(let i=0;i<r.count;i++){
       const k=`${r.id}_${i}`,p=pred[k],res=results[k]; if(!p||!res) continue;
       const pA=parseInt(p.scoreA),pB=parseInt(p.scoreB),rA=parseInt(res.scoreA),rB=parseInt(res.scoreB);
-      const pW=!isNaN(pA)&&!isNaN(pB)?(pA>pB?p.teamA:pA<pB?p.teamB:""):(p.teamA||"");
-      const rW=!isNaN(rA)&&!isNaN(rB)?(rA>rB?res.teamA:rA<rB?res.teamB:""):(res.teamA||"");
+      const played=res.teamA&&res.teamB&&!isNaN(rA)&&!isNaN(rB);
+      if(!played) continue;
+      const pW=!isNaN(pA)&&!isNaN(pB)?(pA>pB?p.teamA:pA<pB?p.teamB:null):null;
+      const rW=rA>rB?res.teamA:rA<rB?res.teamB:null;
       if(pW&&rW&&pW.trim().toLowerCase()===rW.trim().toLowerCase()) total+=bonus;
       if(!isNaN(pA)&&!isNaN(pB)&&!isNaN(rA)&&!isNaN(rB)&&pA===rA&&pB===rB) total+=bonus;
     }
@@ -251,6 +257,27 @@ function scoreKnockoutRound(pred, results, roundId) {
     if(winOk) total+=bonus;
     if(exactOk) total+=bonus;
   }
+
+  return hasPlayedMatch?total:null;
+}
+
+function scoreGroupStageOnly(pred, results) {
+  if(!results) return null;
+  let total=0;
+  let hasPlayedMatch=false;
+
+  GROUPS.forEach(g=>g.matches.forEach((_,i)=>{
+    const k=`G${g.name}_${i}`,p=pred[k],r=results[k];
+    if(!p||!r||r.home===""||r.away==="") return;
+    const ph=parseInt(p.home),pa=parseInt(p.away),rh=parseInt(r.home),ra=parseInt(r.away);
+    if(isNaN(ph)||isNaN(pa)||isNaN(rh)||isNaN(ra)) return;
+
+    hasPlayedMatch=true;
+    const pW=ph>pa?"h":ph<pa?"a":"d";
+    const rW=rh>ra?"h":rh<ra?"a":"d";
+    if(pW===rW) total+=1;
+    if(ph===rh&&pa===ra) total+=2;
+  }));
 
   return hasPlayedMatch?total:null;
 }
@@ -995,6 +1022,10 @@ function EntriesTab({entries,results,delEntry}){
     </div>
   );
   const entry=sel?entries.find(e=>e.id===sel):null;
+  const isRound32Entry=entry?isRound32EntryName(entry.name):false;
+  const entryTotalPts=entry&&results
+    ? (isRound32Entry ? scoreKnockoutRound(entry.predictions,results,"r32") : scoreEntry(entry.predictions,results))
+    : null;
   
   return (
     <div>
@@ -1056,53 +1087,55 @@ function EntriesTab({entries,results,delEntry}){
         <div className="quiniela-card" style={{padding:"24px", background:"rgba(255, 255, 255, 0.9)"}}>
           <div style={{fontWeight:900,fontSize:18,color:c.primaryMid,marginBottom:16,paddingBottom:10,borderBottom:`3px solid ${c.primaryMid}`, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
             <span>📋 Quiniela Detallada: {entry.name}</span>
-            {results && <span style={{fontSize:14,color:c.primaryMid,background:"rgba(26,122,64,0.1)",padding:"4px 12px",borderRadius:6}}>Total: {scoreEntry(entry.predictions,results)} puntos</span>}
+            {results && entryTotalPts!==null && <span style={{fontSize:14,color:c.primaryMid,background:"rgba(26,122,64,0.1)",padding:"4px 12px",borderRadius:6}}>{isRound32Entry?"R32":"Total"}: {entryTotalPts} puntos</span>}
           </div>
           
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:16,marginBottom:24}}>
-            {GROUPS.map(g=>{
-              const gPts=g.matches.reduce((s,_,i)=>{const p=groupMatchPts(entry.predictions[`G${g.name}_${i}`],results?.[`G${g.name}_${i}`]);return s+(p||0);},0);
-              return (
-                <div key={g.name} className="quiniela-card" style={{overflow:"hidden", border:"1.5px solid var(--gray-100)"}}>
-                  <div style={{background:c.primaryMid,color:"white",padding:"8px 12px",fontWeight:900,fontSize:13,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <span>GRUPO <span style={{color:c.accent}}>{g.name}</span></span>
-                    {results&&<span style={{background:"rgba(245,197,24,.2)",color:c.accent,fontSize:11,fontWeight:900,padding:"1px 6px",borderRadius:4}}>{gPts} pt</span>}
+          {!isRound32Entry&&(
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:16,marginBottom:24}}>
+              {GROUPS.map(g=>{
+                const gPts=g.matches.reduce((s,_,i)=>{const p=groupMatchPts(entry.predictions[`G${g.name}_${i}`],results?.[`G${g.name}_${i}`]);return s+(p||0);},0);
+                return (
+                  <div key={g.name} className="quiniela-card" style={{overflow:"hidden", border:"1.5px solid var(--gray-100)"}}>
+                    <div style={{background:c.primaryMid,color:"white",padding:"8px 12px",fontWeight:900,fontSize:13,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <span>GRUPO <span style={{color:c.accent}}>{g.name}</span></span>
+                      {results&&<span style={{background:"rgba(245,197,24,.2)",color:c.accent,fontSize:11,fontWeight:900,padding:"1px 6px",borderRadius:4}}>{gPts} pt</span>}
+                    </div>
+                    {g.matches.map((m,i)=>{
+                      const k=`G${g.name}_${i}`,p=entry.predictions[k]||{},rr=results?.[k];
+                      const pts=groupMatchPts(p,rr),played=rr&&rr.home!==""&&rr.away!=="";
+                      
+                      let bg = "white";
+                      if (played) {
+                        bg = pts === 3 ? "rgba(26,122,64,0.08)" : pts === 1 ? "rgba(26,122,64,0.03)" : "rgba(0,0,0,0.02)";
+                      }
+                      
+                      return (
+                        <div key={i} style={{display:"grid",gridTemplateColumns:"1fr auto auto 1fr",alignItems:"center",padding:"6px 12px",borderBottom:`1px solid ${c.gray100}`,background:bg,gap:6}}>
+                          <div style={{textAlign:"right",fontWeight:600,fontSize:11, display:"flex", alignItems:"center", justifyContent:"flex-end", gap:4}}>
+                            <span>{m[0]}</span>
+                            <span>{getTeamFlag(m[0])}</span>
+                          </div>
+                          <div style={{textAlign:"center",minWidth:60}}>
+                            <div style={{fontWeight:800,fontSize:12,color:c.primaryMid}}>{p.home!==""&&p.away!==""?`${p.home}–${p.away}`:"–"}</div>
+                            {played&&<div style={{fontSize:9,color:c.gray400}}>Real: {rr.home}–{rr.away}</div>}
+                          </div>
+                          <div style={{minWidth:24,textAlign:"center"}}>
+                            {played&&pts!==null&&<span style={{fontSize:10,fontWeight:900,color:"white",background:pts===3?c.primaryMid:pts===1?c.primaryLight:"#bbb",borderRadius:4,padding:"1px 5px"}}>{pts>0?`+${pts}`:"-"}</span>}
+                          </div>
+                          <div style={{textAlign:"left",fontWeight:600,fontSize:11, display:"flex", alignItems:"center", gap:4}}>
+                            <span>{getTeamFlag(m[1])}</span>
+                            <span>{m[1]}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                  {g.matches.map((m,i)=>{
-                    const k=`G${g.name}_${i}`,p=entry.predictions[k]||{},rr=results?.[k];
-                    const pts=groupMatchPts(p,rr),played=rr&&rr.home!==""&&rr.away!=="";
-                    
-                    let bg = "white";
-                    if (played) {
-                      bg = pts === 3 ? "rgba(26,122,64,0.08)" : pts === 1 ? "rgba(26,122,64,0.03)" : "rgba(0,0,0,0.02)";
-                    }
-                    
-                    return (
-                      <div key={i} style={{display:"grid",gridTemplateColumns:"1fr auto auto 1fr",alignItems:"center",padding:"6px 12px",borderBottom:`1px solid ${c.gray100}`,background:bg,gap:6}}>
-                        <div style={{textAlign:"right",fontWeight:600,fontSize:11, display:"flex", alignItems:"center", justifyContent:"flex-end", gap:4}}>
-                          <span>{m[0]}</span>
-                          <span>{getTeamFlag(m[0])}</span>
-                        </div>
-                        <div style={{textAlign:"center",minWidth:60}}>
-                          <div style={{fontWeight:800,fontSize:12,color:c.primaryMid}}>{p.home!==""&&p.away!==""?`${p.home}–${p.away}`:"–"}</div>
-                          {played&&<div style={{fontSize:9,color:c.gray400}}>Real: {rr.home}–{rr.away}</div>}
-                        </div>
-                        <div style={{minWidth:24,textAlign:"center"}}>
-                          {played&&pts!==null&&<span style={{fontSize:10,fontWeight:900,color:"white",background:pts===3?c.primaryMid:pts===1?c.primaryLight:"#bbb",borderRadius:4,padding:"1px 5px"}}>{pts>0?`+${pts}`:"-"}</span>}
-                        </div>
-                        <div style={{textAlign:"left",fontWeight:600,fontSize:11, display:"flex", alignItems:"center", gap:4}}>
-                          <span>{getTeamFlag(m[1])}</span>
-                          <span>{m[1]}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
 
-          {KNOCKOUT_ROUNDS.map(r=>{
+          {(isRound32Entry?KNOCKOUT_ROUNDS.filter(r=>r.id==="r32"):KNOCKOUT_ROUNDS).map(r=>{
             const bonus=KO_BONUS[r.id]??1;
             return (
               <div key={r.id} style={{marginBottom:20}}>
@@ -1152,42 +1185,44 @@ function EntriesTab({entries,results,delEntry}){
           })}
 
           {/* Golden Champion Summary */}
-          <div style={{
-            background:`linear-gradient(135deg, ${c.primary}, #061a0d)`,
-            border:`1.5px solid ${c.accent}`,
-            borderRadius:14,
-            padding:"20px",
-            textAlign:"center",
-            color:"white",
-            marginTop:16
-          }}>
-            <div style={{color:c.accent,fontWeight:900,fontSize:16,marginBottom:12, fontFamily:"var(--font-heading)"}}>🏆 Campeón &amp; Goleador Pronosticado</div>
-            <div style={{display:"flex",gap:16,justifyContent:"center",flexWrap:"wrap"}}>
-              <div style={{background:"rgba(255,255,255,.06)",borderRadius:8,padding:"10px 16px", flexGrow:1, maxWidth:240}}>
-                <div style={{fontSize:9,color:"rgba(255,255,255,.4)",fontWeight:800,marginBottom:6}}>FINALISTA 1 (CAMPEÓN)</div>
-                <div style={{fontWeight:800,fontSize:13,color:c.accent, display:"flex", alignItems:"center", justifyContent:"center", gap:6}}>
-                  <span>{getTeamFlag(entry.predictions.champion)}</span>
-                  <span>{entry.predictions.champion||"–"}</span>
-                </div>
-                {entry.predictions.finalScoreA!==""&&entry.predictions.finalScoreB!==""&&(
-                  <div style={{fontSize:14, fontWeight:900, color:"white", marginTop:4}}>
-                    Marcador: {entry.predictions.finalScoreA} - {entry.predictions.finalScoreB}
+          {!isRound32Entry&&(
+            <div style={{
+              background:`linear-gradient(135deg, ${c.primary}, #061a0d)`,
+              border:`1.5px solid ${c.accent}`,
+              borderRadius:14,
+              padding:"20px",
+              textAlign:"center",
+              color:"white",
+              marginTop:16
+            }}>
+              <div style={{color:c.accent,fontWeight:900,fontSize:16,marginBottom:12, fontFamily:"var(--font-heading)"}}>🏆 Campeón &amp; Goleador Pronosticado</div>
+              <div style={{display:"flex",gap:16,justifyContent:"center",flexWrap:"wrap"}}>
+                <div style={{background:"rgba(255,255,255,.06)",borderRadius:8,padding:"10px 16px", flexGrow:1, maxWidth:240}}>
+                  <div style={{fontSize:9,color:"rgba(255,255,255,.4)",fontWeight:800,marginBottom:6}}>FINALISTA 1 (CAMPEÓN)</div>
+                  <div style={{fontWeight:800,fontSize:13,color:c.accent, display:"flex", alignItems:"center", justifyContent:"center", gap:6}}>
+                    <span>{getTeamFlag(entry.predictions.champion)}</span>
+                    <span>{entry.predictions.champion||"–"}</span>
                   </div>
-                )}
-              </div>
-              <div style={{background:"rgba(255,255,255,.06)",borderRadius:8,padding:"10px 16px", flexGrow:1, maxWidth:240}}>
-                <div style={{fontSize:9,color:"rgba(255,255,255,.4)",fontWeight:800,marginBottom:6}}>FINALISTA 2</div>
-                <div style={{fontWeight:800,fontSize:13,color:"white", display:"flex", alignItems:"center", justifyContent:"center", gap:6}}>
-                  <span>{getTeamFlag(entry.predictions.finalist)}</span>
-                  <span>{entry.predictions.finalist||"–"}</span>
+                  {entry.predictions.finalScoreA!==""&&entry.predictions.finalScoreB!==""&&(
+                    <div style={{fontSize:14, fontWeight:900, color:"white", marginTop:4}}>
+                      Marcador: {entry.predictions.finalScoreA} - {entry.predictions.finalScoreB}
+                    </div>
+                  )}
                 </div>
-              </div>
-              <div style={{background:"rgba(255,255,255,.06)",borderRadius:8,padding:"10px 16px", flexGrow:1, maxWidth:240}}>
-                <div style={{fontSize:9,color:"rgba(255,255,255,.4)",fontWeight:800,marginBottom:6}}>⚽ MÁXIMO GOLEADOR</div>
-                <div style={{fontWeight:800,fontSize:14,color:c.accent}}>🏃‍♂️ {entry.predictions.topScorer||"–"}</div>
+                <div style={{background:"rgba(255,255,255,.06)",borderRadius:8,padding:"10px 16px", flexGrow:1, maxWidth:240}}>
+                  <div style={{fontSize:9,color:"rgba(255,255,255,.4)",fontWeight:800,marginBottom:6}}>FINALISTA 2</div>
+                  <div style={{fontWeight:800,fontSize:13,color:"white", display:"flex", alignItems:"center", justifyContent:"center", gap:6}}>
+                    <span>{getTeamFlag(entry.predictions.finalist)}</span>
+                    <span>{entry.predictions.finalist||"–"}</span>
+                  </div>
+                </div>
+                <div style={{background:"rgba(255,255,255,.06)",borderRadius:8,padding:"10px 16px", flexGrow:1, maxWidth:240}}>
+                  <div style={{fontSize:9,color:"rgba(255,255,255,.4)",fontWeight:800,marginBottom:6}}>⚽ MÁXIMO GOLEADOR</div>
+                  <div style={{fontWeight:800,fontSize:14,color:c.accent}}>🏃‍♂️ {entry.predictions.topScorer||"–"}</div>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       )}
     </div>
@@ -1315,6 +1350,104 @@ function ResultsTab({editR,setEditR,saveResults}){
   );
 }
 
+function LeaderboardPodium({scores, pointsKey}) {
+  if (scores.length < 2) return null;
+
+  const podiumEntries = [
+    { entry: scores[1], rank: 1, height: 190, textColor: c.primaryMid, cardBackground: "linear-gradient(180deg, #eef2f5 0%, #c9d2da 100%)", pointsColor: "#34495e" },
+    { entry: scores[0], rank: 0, height: 270, textColor: c.primaryMid, cardBackground: "linear-gradient(180deg, #ffd86a 0%, #ffca18 100%)", pointsColor: "#113b2a" },
+    { entry: scores[2], rank: 2, height: 150, textColor: c.primaryMid, cardBackground: "linear-gradient(180deg, #d8cec9 0%, #aab8c3 100%)", pointsColor: "#34495e" },
+  ].filter(({ entry }) => Boolean(entry));
+
+  return (
+    <div style={{background:"linear-gradient(180deg, rgba(245,248,247,0.95) 0%, rgba(231,237,234,0.98) 100%)",border:"1px solid rgba(26,122,64,0.08)",borderRadius:28,padding:"18px 16px 0",marginBottom:22,boxShadow:"inset 0 1px 0 rgba(255,255,255,0.8), 0 10px 30px rgba(14,52,31,0.05)"}}>
+      <div style={{display:"flex",justifyContent:"center",alignItems:"flex-end",gap:28,minHeight:380}}>
+        {podiumEntries.map(({ entry, rank, height, textColor, cardBackground, pointsColor })=>(
+          <div key={`${pointsKey}-${entry.id}-${rank}`} style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"flex-end",width:184,maxWidth:"30%"}}>
+            <div style={{fontSize:28,lineHeight:1,marginBottom:8,filter:"drop-shadow(0 4px 8px rgba(0,0,0,0.12))"}}>{["🥇","🥈","🥉"][rank]}</div>
+            <div style={{fontWeight:900,fontSize:16,color:textColor,textAlign:"center",marginBottom:12,wordBreak:"break-word"}}>{entry.name}</div>
+            <div style={{width:"100%",height,background:cardBackground,border:"4px solid rgba(255,255,255,0.9)",borderBottom:"none",borderRadius:"20px 20px 0 0",boxShadow:"0 12px 30px rgba(0,0,0,0.10)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+              <div style={{fontWeight:900,fontSize:34,lineHeight:1,color:pointsColor}}>{entry[pointsKey] ?? 0}</div>
+              <div style={{fontWeight:800,fontSize:14,letterSpacing:0.8,color:pointsColor,opacity:0.8,marginTop:4}}>PTS</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LeaderboardSection({title, scores, pointsKey, emptyLabel, descriptor}) {
+  const medals=["🥇","🥈","🥉"];
+
+  return (
+    <div style={{marginTop:28}}>
+      <div style={{fontWeight:900,fontSize:20,color:c.primaryMid,marginBottom:16,fontFamily:"var(--font-heading)"}}>{title}</div>
+      {scores.length===0 ? (
+        <div className="quiniela-card" style={{textAlign:"center",padding:"32px 20px",color:c.gray400,fontWeight:700}}>
+          {emptyLabel}
+        </div>
+      ) : (
+        <>
+          <LeaderboardPodium scores={scores} pointsKey={pointsKey} />
+          <div className="quiniela-card" style={{overflow:"hidden"}}>
+            {scores.map((s,i)=>(
+              <div
+                key={`${pointsKey}-${s.id}`}
+                className="standing-row"
+                style={{
+                  display:"flex",
+                  alignItems:"center",
+                  gap:14,
+                  padding:"12px 20px",
+                  background:i===0?"rgba(245,197,24,0.06)":i===1?"rgba(200,207,191,0.08)":"white",
+                  borderBottom:`1px solid ${c.gray100}`
+                }}
+              >
+                <div style={{
+                  width:30,
+                  height:30,
+                  borderRadius:"50%",
+                  display:"flex",
+                  alignItems:"center",
+                  justifyContent:"center",
+                  fontWeight:900,
+                  fontSize:13,
+                  background:i===0?c.accent:i===1?"#cfd8dc":i===2?"#d7ccc8":c.gray100,
+                  color:i<3?c.primary:c.gray600,
+                  flexShrink:0,
+                  boxShadow: i<3 ? "0 2px 5px rgba(0,0,0,0.1)" : "none",
+                  border: i<3 ? "1.5px solid white" : "none"
+                }}>
+                  {i<3?medals[i]:i+1}
+                </div>
+
+                <div style={{flex:1,fontWeight:800,fontSize:14, color:c.ink}}>{s.name}</div>
+
+                <div style={{fontSize:11,color:c.gray400, fontWeight:500}}>
+                  {descriptor}
+                </div>
+
+                <div style={{
+                  background:i===0?c.accent:i===1?c.gray100:c.gray50,
+                  color:i===0?c.primary:c.primaryMid,
+                  fontWeight:900,
+                  fontSize:13,
+                  padding:"6px 14px",
+                  borderRadius:8,
+                  border: i===0 ? `1px solid rgba(245,197,24,0.5)` : `1px solid ${c.gray200}`
+                }}>
+                  {s[pointsKey]??0} pt
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function LeaderboardTab({scores,results}){
   if(!results) return (
     <div className="quiniela-card" style={{textAlign:"center",padding:"60px 20px",color:c.gray400}}>
@@ -1328,6 +1461,10 @@ function LeaderboardTab({scores,results}){
     </div>
   );
   const medals=["🥇","🥈","🥉"];
+  const groupStageScores=[...scores]
+    .map(s=>({...s,groupPts:scoreGroupStageOnly(s.predictions,results)}))
+    .filter(s=>s.groupPts!==null)
+    .sort((a,b)=>(b.groupPts||0)-(a.groupPts||0)||new Date(a.submitted_at)-new Date(b.submitted_at));
   const round32Scores=[...scores]
     .map(s=>({...s,r32Pts:scoreKnockoutRound(s.predictions,results,"r32")}))
     .filter(s=>s.r32Pts!==null)
@@ -1335,169 +1472,27 @@ function LeaderboardTab({scores,results}){
   
   return (
     <div>
-      <div style={{fontWeight:900,fontSize:20,color:c.primaryMid,marginBottom:16, fontFamily:"var(--font-heading)"}}>Clasificación General</div>
-      
-      {/* Visual Podium for top 3 */}
-      {scores.length>=2&&(
-        <div style={{display:"flex",justifyContent:"center",alignItems:"flex-end",gap:16,marginBottom:32,padding:"20px 0", background:"rgba(26,122,64,0.02)", borderRadius:16, border:"1px solid rgba(26,122,64,0.05)"}}>
-          {[
-            { entry: scores[1], rank: 1, podiumHeight: 130 },
-            { entry: scores[0], rank: 0, podiumHeight: 170 },
-            { entry: scores[2], rank: 2, podiumHeight: 105 },
-          ].filter(({ entry }) => Boolean(entry)).map(({ entry: s, rank, podiumHeight })=>{
-            const rankBackground = [
-              `linear-gradient(to top, var(--accent), #ffd54f)`,
-              `linear-gradient(to top, #cfd8dc, #eceff1)`,
-              `linear-gradient(to top, #b0bec5, #d7ccc8)`
-            ][rank];
-            
-            return (
-              <div key={s.id} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6, width:90}}>
-                <div style={{fontSize:26, filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.15))"}}>{medals[rank]}</div>
-                <div style={{fontWeight:800,fontSize:12,color:c.primaryMid,textAlign:"center",wordBreak:"break-word", maxWidth:90, textShadow:"0 1px 1px white"}}>{s.name}</div>
-                <div style={{
-                  background:rankBackground,
-                  color:rank===0?c.primary:"#2c3e50",
-                  fontWeight:900,
-                  fontSize:16,
-                  borderRadius:"10px 10px 0 0",
-                  width:"100%",
-                  textAlign:"center",
-                  height:podiumHeight,
-                  display:"flex",
-                  flexDirection:"column",
-                  alignItems:"center",
-                  justifyContent:"center",
-                  boxShadow:"0 4px 10px rgba(0,0,0,0.08)",
-                  border:"1.5px solid white",
-                  borderBottom:"none"
-                }}>
-                  <span>{s.pts}</span>
-                  <span style={{fontSize:9, fontWeight:700, opacity:0.7, textTransform:"uppercase"}}>Pts</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Leaderboard Table List */}
-      <div className="quiniela-card" style={{overflow:"hidden"}}>
-        {scores.map((s,i)=>(
-          <div 
-            key={s.id} 
-            className="standing-row"
-            style={{
-              display:"flex",
-              alignItems:"center",
-              gap:14,
-              padding:"12px 20px",
-              background:i===0?"rgba(245,197,24,0.06)":i===1?"rgba(200,207,191,0.08)":"white",
-              borderBottom:`1px solid ${c.gray100}`
-            }}
-          >
-            {/* Rank Indicator */}
-            <div style={{
-              width:30,
-              height:30,
-              borderRadius:"50%",
-              display:"flex",
-              alignItems:"center",
-              justifyContent:"center",
-              fontWeight:900,
-              fontSize:13,
-              background:i===0?c.accent:i===1?"#cfd8dc":i===2?"#d7ccc8":c.gray100,
-              color:i<3?c.primary:c.gray600,
-              flexShrink:0,
-              boxShadow: i<3 ? "0 2px 5px rgba(0,0,0,0.1)" : "none",
-              border: i<3 ? "1.5px solid white" : "none"
-            }}>
-              {i<3?medals[i]:i+1}
-            </div>
-            
-            {/* Participant Name */}
-            <div style={{flex:1,fontWeight:800,fontSize:14, color:c.ink}}>{s.name}</div>
-            
-            {/* Submitted Date */}
-            <div style={{fontSize:11,color:c.gray400, fontWeight:500}}>
-              {new Date(s.submitted_at).toLocaleDateString("es-ES",{day:"numeric",month:"short"})}
-            </div>
-            
-            {/* Points Badge */}
-            <div style={{
-              background:i===0?c.accent:i===1?c.gray100:c.gray50,
-              color:i===0?c.primary:c.primaryMid,
-              fontWeight:900,
-              fontSize:13,
-              padding:"6px 14px",
-              borderRadius:8,
-              border: i===0 ? `1px solid rgba(245,197,24,0.5)` : `1px solid ${c.gray200}`
-            }}>
-              {s.pts??0} pt
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div style={{fontWeight:900,fontSize:20,color:c.primaryMid,marginTop:28,marginBottom:16, fontFamily:"var(--font-heading)"}}>Ronda de 32</div>
-      {round32Scores.length===0 ? (
-        <div className="quiniela-card" style={{textAlign:"center",padding:"32px 20px",color:c.gray400,fontWeight:700}}>
-          Aun no hay resultados cargados para puntuar la Ronda de 32.
-        </div>
-      ) : (
-        <div className="quiniela-card" style={{overflow:"hidden"}}>
-          {round32Scores.map((s,i)=>(
-            <div
-              key={`r32-${s.id}`}
-              className="standing-row"
-              style={{
-                display:"flex",
-                alignItems:"center",
-                gap:14,
-                padding:"12px 20px",
-                background:i===0?"rgba(245,197,24,0.06)":i===1?"rgba(200,207,191,0.08)":"white",
-                borderBottom:`1px solid ${c.gray100}`
-              }}
-            >
-              <div style={{
-                width:30,
-                height:30,
-                borderRadius:"50%",
-                display:"flex",
-                alignItems:"center",
-                justifyContent:"center",
-                fontWeight:900,
-                fontSize:13,
-                background:i===0?c.accent:i===1?"#cfd8dc":i===2?"#d7ccc8":c.gray100,
-                color:i<3?c.primary:c.gray600,
-                flexShrink:0,
-                boxShadow: i<3 ? "0 2px 5px rgba(0,0,0,0.1)" : "none",
-                border: i<3 ? "1.5px solid white" : "none"
-              }}>
-                {i<3?medals[i]:i+1}
-              </div>
-
-              <div style={{flex:1,fontWeight:800,fontSize:14, color:c.ink}}>{s.name}</div>
-
-              <div style={{fontSize:11,color:c.gray400, fontWeight:500}}>
-                Solo R32
-              </div>
-
-              <div style={{
-                background:i===0?c.accent:i===1?c.gray100:c.gray50,
-                color:i===0?c.primary:c.primaryMid,
-                fontWeight:900,
-                fontSize:13,
-                padding:"6px 14px",
-                borderRadius:8,
-                border: i===0 ? `1px solid rgba(245,197,24,0.5)` : `1px solid ${c.gray200}`
-              }}>
-                {s.r32Pts??0} pt
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <LeaderboardSection
+        title="Fase de Grupos"
+        scores={groupStageScores}
+        pointsKey="groupPts"
+        emptyLabel="Aun no hay resultados cargados para puntuar la fase de grupos."
+        descriptor="Solo grupos"
+      />
+      <LeaderboardSection
+        title="Ronda de 32"
+        scores={round32Scores}
+        pointsKey="r32Pts"
+        emptyLabel="Aun no hay resultados cargados para puntuar la Ronda de 32."
+        descriptor="Solo R32"
+      />
+      <LeaderboardSection
+        title="Clasificación General"
+        scores={scores}
+        pointsKey="pts"
+        emptyLabel="Aun no hay resultados cargados para puntuar la clasificación general."
+        descriptor="Total"
+      />
     </div>
   );
 }
