@@ -98,6 +98,24 @@ const R32_PAIRS = [
   ["1C","2F"],["2E","2I"],["1A","3CEFHI"],["1L","3EHIJK"],
   ["1J","2H"],["2D","2G"],["1B","3EFGIJ"],["1K","3DEIJL"],
 ];
+const OFFICIAL_R32_MATCHES = [
+  { teamA:"Sudáfrica", teamB:"Canadá" },
+  { teamA:"Brasil", teamB:"Japón" },
+  { teamA:"Alemania", teamB:"Paraguay" },
+  { teamA:"P. Bajos", teamB:"Marruecos" },
+  { teamA:"C. de Marfil", teamB:"Noruega" },
+  { teamA:"Francia", teamB:"Suecia" },
+  { teamA:"México", teamB:"Ecuador" },
+  { teamA:"Inglaterra", teamB:"DR Congo" },
+  { teamA:"Bélgica", teamB:"Senegal" },
+  { teamA:"EE.UU.", teamB:"Bosnia-Herz." },
+  { teamA:"España", teamB:"Austria" },
+  { teamA:"Portugal", teamB:"Croacia" },
+  { teamA:"Suiza", teamB:"Algeria" },
+  { teamA:"Australia", teamB:"Egipto" },
+  { teamA:"Argentina", teamB:"Cabo Verde" },
+  { teamA:"Colombia", teamB:"Ghana" },
+];
 const THIRD_SLOTS_ORDER = ["3ABCDF","3CDFGH","3CEFHI","3EHIJK","3BEFIJ","3AEHIJ","3EFGIJ","3DEIJL"];
 const R16_PAIRS = [[0,1],[2,3],[4,5],[6,7],[8,9],[10,11],[12,13],[14,15]];
 const QF_PAIRS  = [[0,1],[2,3],[4,5],[6,7]];
@@ -110,16 +128,35 @@ const KNOCKOUT_ROUNDS = [
   { id:"tp",  label:"Tercer Puesto",   badge:"18 Jul",       count:1  },
 ];
 const KO_BONUS = { r32:1, r16:2, qf:3, sf:4, tp:5 };
+const ENTRY_NAME_PREFIX = "Round 32";
 
 function sortEntriesBySubmittedAt(entries) {
   return [...entries].sort((a, b) => new Date(a.submitted_at) - new Date(b.submitted_at));
+}
+
+function formatEntryName(name) {
+  return `${ENTRY_NAME_PREFIX} - ${name}`;
+}
+
+function applyOfficialR32Matches(preds) {
+  if (!preds) return preds;
+  const next = { ...preds };
+  OFFICIAL_R32_MATCHES.forEach((match, i) => {
+    const key = `r32_${i}`;
+    next[key] = {
+      ...(next[key] || {}),
+      teamA: match.teamA,
+      teamB: match.teamB,
+    };
+  });
+  return next;
 }
 
 function emptyPredictions() {
   const p = { champion:"", finalist:"", topScorer:"", finalScoreA:"", finalScoreB:"" };
   GROUPS.forEach(g => g.matches.forEach((_,i) => { p[`G${g.name}_${i}`]={home:"",away:""}; }));
   KNOCKOUT_ROUNDS.forEach(r => { for(let i=0;i<r.count;i++) p[`${r.id}_${i}`]={teamA:"",teamB:"",scoreA:"",scoreB:""}; });
-  return p;
+  return applyOfficialR32Matches(p);
 }
 
 function calcStandings(gName, preds) {
@@ -140,6 +177,10 @@ function calcStandings(gName, preds) {
 
 function groupComplete(gName, preds) {
   return GROUPS.find(x=>x.name===gName).matches.every((_,i)=>{ const p=preds[`G${gName}_${i}`]; return p&&p.home!==""&&p.away!==""; });
+}
+function allGroupsComplete(preds) {
+  if (!preds) return false;
+  return GROUPS.every(g => groupComplete(g.name, preds));
 }
 function getThird(gName, preds) { if(!groupComplete(gName,preds)) return null; return calcStandings(gName,preds)[2]??null; }
 function resolveGroupSlot(slot, preds) {
@@ -226,7 +267,7 @@ export default function App() {
     (async()=>{
       if (isDemoMode) {
         setEntries(sortEntriesBySubmittedAt(getLocalEntries()));
-        setResults(getLocalResults());
+        setResults(applyOfficialR32Matches(getLocalResults()));
       } else {
         try {
           const [{ data: ents }, { data: res }] = await Promise.all([
@@ -234,7 +275,7 @@ export default function App() {
             supabase.from("results").select("*").limit(1),
           ]);
           if(ents) setEntries(sortEntriesBySubmittedAt(ents));
-          if(res&&res[0]) setResults(res[0].data);
+          if(res&&res[0]) setResults(applyOfficialR32Matches(res[0].data));
         } catch(e) {
           // Log connection issues to the console
           console.error("Error connecting to Supabase database:", e);
@@ -242,7 +283,7 @@ export default function App() {
       }
       try {
         const draft=localStorage.getItem("wc26-draft");
-        if(draft){const{name:n,preds:p}=JSON.parse(draft);if(n)setName(n);if(p)setPreds(p);}
+        if(draft){const{name:n,preds:p}=JSON.parse(draft);if(n)setName(n);if(p)setPreds(applyOfficialR32Matches(p));}
       } catch {
         // Ignore draft parse errors
       }
@@ -261,7 +302,7 @@ export default function App() {
     const resultsSub = supabase.channel("results-changes")
       .on("postgres_changes", { event:"*", schema:"public", table:"results" }, async()=>{
         const { data } = await supabase.from("results").select("*").limit(1);
-        if(data&&data[0]) setResults(data[0].data);
+        if(data&&data[0]) setResults(applyOfficialR32Matches(data[0].data));
       }).subscribe();
     return ()=>{ supabase.removeChannel(entriesSub); supabase.removeChannel(resultsSub); };
   },[]);
@@ -272,10 +313,12 @@ export default function App() {
   const handleSetName=useCallback((n)=>{setName(n);setSaved(false);saveDraft(n,preds);},[preds,saveDraft]);
 
   const autoSlots=useMemo(()=>{
-    const slots={}, thirdsMap=resolveAllThirds(preds);
+    const seedPreds=results&&allGroupsComplete(results)?results:preds;
+    const slots={}, thirdsMap=resolveAllThirds(seedPreds);
     const r32Resolved=R32_PAIRS.map(([sA,sB],i)=>{
-      const autoA=sA.startsWith("3")?(thirdsMap.get(sA)??null):resolveGroupSlot(sA,preds);
-      const autoB=sB.startsWith("3")?(thirdsMap.get(sB)??null):resolveGroupSlot(sB,preds);
+      const official=OFFICIAL_R32_MATCHES[i];
+      const autoA=official?.teamA||(sA.startsWith("3")?(thirdsMap.get(sA)??null):resolveGroupSlot(sA,seedPreds));
+      const autoB=official?.teamB||(sB.startsWith("3")?(thirdsMap.get(sB)??null):resolveGroupSlot(sB,seedPreds));
       const tA=autoA||(preds[`r32_${i}`]?.teamA||null);
       const tB=autoB||(preds[`r32_${i}`]?.teamB||null);
       slots[`r32_${i}`]={teamA:tA,teamB:tB};
@@ -309,7 +352,7 @@ export default function App() {
     });
     slots[`tp_0`]={teamA:sfLosers[0]??null,teamB:sfLosers[1]??null};
     return slots;
-  },[preds]);
+  },[preds,results]);
 
   async function submit(){
     if(!name.trim()){flash("⚠️ Escribe tu nombre primero");return;}
@@ -322,8 +365,9 @@ export default function App() {
     });
     
     const trimmedName=name.trim();
-    const payload={name:trimmedName,predictions:mergedPreds};
-    const existing=entries.find(e=>e.name.toLowerCase()===name.trim().toLowerCase());
+    const entryName=formatEntryName(trimmedName);
+    const payload={name:entryName,predictions:mergedPreds};
+    const existing=entries.find(e=>e.name.toLowerCase()===entryName.toLowerCase());
     
     if (isDemoMode) {
       const submittedAt = new Date().toISOString();
@@ -343,11 +387,11 @@ export default function App() {
     try {
       const { entry, editToken } = await submitEntry({
         ...payload,
-        editToken: getEntryEditToken(trimmedName),
+        editToken: getEntryEditToken(entryName),
       });
 
       if (editToken) {
-        saveEntryEditToken(trimmedName, editToken);
+        saveEntryEditToken(entryName, editToken);
       }
 
       setEntries(prev => sortEntriesBySubmittedAt([
@@ -363,21 +407,22 @@ export default function App() {
   }
 
   async function saveResults(r){
+    const normalizedResults = applyOfficialR32Matches(r);
     if (isDemoMode) {
-      saveLocalResults(r);
-      setResults(r);
+      saveLocalResults(normalizedResults);
+      setResults(normalizedResults);
       flash("✅ Resultados guardados localmente");
       return;
     }
 
     try {
-      await saveResultsRemote(r);
-      setResults(r);
+      await saveResultsRemote(normalizedResults);
+      setResults(normalizedResults);
       flash("✅ Resultados guardados");
     } catch (error) {
       try {
-        await saveResultsDirect(r);
-        setResults(r);
+        await saveResultsDirect(normalizedResults);
+        setResults(normalizedResults);
         flash("✅ Resultados guardados en Supabase");
       } catch (directError) {
         flash("❌ Error: " + (directError.message || error.message));
@@ -466,7 +511,7 @@ export default function App() {
       {/* Main views */}
       <div style={{maxWidth:960, margin:"0 auto", padding:"24px 20px 80px"}}>
         {view==="fill"
-          ?<FillView name={name} setName={handleSetName} preds={preds} setF={setF} setTop={setTop} submit={submit} saved={saved} autoSlots={autoSlots}/>
+          ?<FillView name={name} setName={handleSetName} preds={preds} setF={setF} setTop={setTop} submit={submit} saved={saved} autoSlots={autoSlots} results={results}/>
           :<AdminView key={results ? "loaded" : "loading"} entries={entries} results={results} saveResults={saveResults} delEntry={delEntry} tab={adminTab} setTab={setAdminTab}/>
         }
       </div>
@@ -478,9 +523,10 @@ export default function App() {
 
 // ── Componentes de Relleno (FillView) ──
 
-function FillView({name,setName,preds,setF,setTop,submit,saved,autoSlots}){
-  const standings=useMemo(()=>{const s={};GROUPS.forEach(g=>{s[g.name]=calcStandings(g.name,preds);});return s;},[preds]);
-  const allGroupsDone=GROUPS.every(g=>groupComplete(g.name,preds));
+function FillView({name,setName,preds,setF,setTop,submit,saved,autoSlots,results}){
+  const officialGroupResultsReady=useMemo(()=>allGroupsComplete(results),[results]);
+  const groupDisplayPreds=officialGroupResultsReady?results:preds;
+  const standings=useMemo(()=>{const s={};GROUPS.forEach(g=>{s[g.name]=calcStandings(g.name,groupDisplayPreds);});return s;},[groupDisplayPreds]);
   const icons={r32:"⚡",r16:"🎯",qf:"🔥",sf:"⭐",tp:"🥉"};
   
   return (
@@ -498,6 +544,9 @@ function FillView({name,setName,preds,setF,setTop,submit,saved,autoSlots}){
               value={name} 
               onChange={e=>setName(e.target.value)}
             />
+            <div style={{fontSize:11,color:c.gray400,marginTop:6,fontWeight:600}}>
+              Se guardará como: {ENTRY_NAME_PREFIX}{name.trim()?` - ${name.trim()}`:" - Tu Nombre"}
+            </div>
           </div>
         </div>
         <div className="quiniela-card" style={{padding:"18px 24px", display:"flex", flexDirection:"column", justifyContent:"center"}}>
@@ -515,17 +564,21 @@ function FillView({name,setName,preds,setF,setTop,submit,saved,autoSlots}){
 
       {/* Fase de Grupos */}
       <SectionTitle icon="🏟️" label="Fase de Grupos" badge="11 – 27 Jun" />
+      <div style={{background:"rgba(245, 197, 24, 0.12)",borderRadius:12,border:`1.5px solid rgba(245,197,24,0.3)`,padding:"14px 16px",marginBottom:16,color:"#725103",fontSize:13,fontWeight:700}}>
+        La fase de grupos está cerrada y no se puede editar.
+        {officialGroupResultsReady ? " Aquí ves los resultados oficiales." : " Los resultados oficiales aparecerán aquí cuando estén cargados."}
+      </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:16,marginBottom:32}}>
-        {GROUPS.map(g=><GroupCard key={g.name} g={g} preds={preds} setF={setF} standings={standings[g.name]}/>)}
+        {GROUPS.map(g=><GroupCard key={g.name} g={g} preds={groupDisplayPreds} setF={setF} standings={standings[g.name]} results={results} lockResults={true}/>)}
       </div>
 
       {/* Fase Eliminatoria */}
       {KNOCKOUT_ROUNDS.map(r=>(
         <div key={r.id}>
           <SectionTitle icon={icons[r.id]} label={r.label} badge={r.badge}/>
-          {r.id==="r32"&&!allGroupsDone&&(
-            <div style={{background:"rgba(26,122,64,0.05)",borderRadius:12,border:`1.5px dashed rgba(26,122,64,0.25)`,padding:"20px",marginBottom:20,textAlign:"center",color:c.primaryMid,fontSize:13, fontWeight:600}}>
-              ⏳ Completa todos los partidos de la fase de grupos para auto-generar los equipos clasificados en esta ronda.
+          {r.id==="r32"&&(
+            <div style={{background:"rgba(26,122,64,0.05)",borderRadius:12,border:`1.5px solid rgba(26,122,64,0.18)`,padding:"14px 16px",marginBottom:20,textAlign:"center",color:c.primaryMid,fontSize:13,fontWeight:700}}>
+              ✅ Esta ronda ya está cargada con los partidos oficiales de la Eliminatoria de 32.
             </div>
           )}
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:12,marginBottom:28}}>
@@ -566,7 +619,7 @@ function SectionTitle({icon,label,badge}){
   );
 }
 
-function GroupCard({g,preds,setF,standings}){
+function GroupCard({g,preds,setF,standings,results,lockResults}){
   return (
     <div className="quiniela-card" style={{overflow:"hidden", display:"flex", flexDirection:"column"}}>
       <div style={{background:c.primaryMid,color:"white",padding:"10px 16px",fontWeight:900,fontSize:14,fontFamily:"var(--font-heading)", letterSpacing:0.5, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
@@ -577,44 +630,60 @@ function GroupCard({g,preds,setF,standings}){
       {/* Matches List */}
       <div style={{padding:"8px 0", flexGrow:1}}>
         {g.matches.map((m,i)=>{
-          const k=`G${g.name}_${i}`,p=preds[k]||{};
+          const k=`G${g.name}_${i}`,p=preds[k]||{},official=results?.[k];
+          const hasOfficial=official&&official.home!==""&&official.away!=="";
           return (
-            <div key={i} className="standing-row" style={{display:"grid",gridTemplateColumns:"1fr auto auto auto 1fr",alignItems:"center",padding:"8px 12px",borderBottom:`1px solid ${c.gray100}`,gap:8}}>
+            <div key={i} className="standing-row" style={{padding:"8px 12px",borderBottom:`1px solid ${c.gray100}`,background:hasOfficial?"rgba(26,122,64,0.025)":"transparent"}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr auto auto auto 1fr",alignItems:"center",gap:8}}>
               {/* Home Team */}
-              <div style={{textAlign:"right",fontWeight:700,fontSize:12, display:"flex", alignItems:"center", justifyContent:"flex-end", gap:6}}>
+                <div style={{textAlign:"right",fontWeight:700,fontSize:12, display:"flex", alignItems:"center", justifyContent:"flex-end", gap:6}}>
                 <span style={{whiteSpace:"nowrap"}}>{m[0]}</span>
                 <span style={{fontSize:14}}>{getTeamFlag(m[0])}</span>
-              </div>
+                </div>
               
               {/* Home Input */}
-              <input 
-                className="quiniela-input-num" 
-                type="number" 
-                min={0} 
-                max={20} 
-                value={p.home||""} 
-                placeholder="–" 
-                onChange={e=>setF(k,"home",e.target.value)}
-              />
+                <input 
+                  className="quiniela-input-num" 
+                  type="number" 
+                  min={0} 
+                  max={20} 
+                  value={p.home||""} 
+                  placeholder="–" 
+                  readOnly={lockResults}
+                  disabled={lockResults}
+                  onChange={e=>setF(k,"home",e.target.value)}
+                  style={lockResults?{opacity:0.55,cursor:"not-allowed",background:c.gray50}:{}} 
+                />
               
-              <span style={{color:c.gray400,fontWeight:800,fontSize:12}}>–</span>
+                <span style={{color:c.gray400,fontWeight:800,fontSize:12}}>–</span>
               
               {/* Away Input */}
-              <input 
-                className="quiniela-input-num" 
-                type="number" 
-                min={0} 
-                max={20} 
-                value={p.away||""} 
-                placeholder="–" 
-                onChange={e=>setF(k,"away",e.target.value)}
-              />
+                <input 
+                  className="quiniela-input-num" 
+                  type="number" 
+                  min={0} 
+                  max={20} 
+                  value={p.away||""} 
+                  placeholder="–" 
+                  readOnly={lockResults}
+                  disabled={lockResults}
+                  onChange={e=>setF(k,"away",e.target.value)}
+                  style={lockResults?{opacity:0.55,cursor:"not-allowed",background:c.gray50}:{}} 
+                />
               
               {/* Away Team */}
-              <div style={{textAlign:"left",fontWeight:700,fontSize:12, display:"flex", alignItems:"center", gap:6}}>
+                <div style={{textAlign:"left",fontWeight:700,fontSize:12, display:"flex", alignItems:"center", gap:6}}>
                 <span style={{fontSize:14}}>{getTeamFlag(m[1])}</span>
                 <span style={{whiteSpace:"nowrap"}}>{m[1]}</span>
+                </div>
               </div>
+              {hasOfficial&&(
+                <div style={{display:"flex",justifyContent:"center",marginTop:6}}>
+                  <span style={{fontSize:10,fontWeight:800,color:c.primaryMid,background:"rgba(26,122,64,0.08)",border:`1px solid rgba(26,122,64,0.16)`,borderRadius:999,padding:"4px 10px",letterSpacing:0.2}}>
+                    Resultado real: {official.home} - {official.away}
+                  </span>
+                </div>
+              )}
             </div>
           );
         })}
