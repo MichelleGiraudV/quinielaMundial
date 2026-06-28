@@ -227,6 +227,34 @@ function scoreEntry(pred, results) {
   return total;
 }
 
+function scoreKnockoutRound(pred, results, roundId) {
+  if(!results) return null;
+  const round=KNOCKOUT_ROUNDS.find(r=>r.id===roundId);
+  if(!round) return null;
+  const bonus=KO_BONUS[roundId]??1;
+  let total=0;
+  let hasPlayedMatch=false;
+
+  for(let i=0;i<round.count;i++){
+    const k=`${roundId}_${i}`,p=pred[k],res=results[k];
+    if(!p||!res) continue;
+    const pA=parseInt(p.scoreA),pB=parseInt(p.scoreB),rA=parseInt(res.scoreA),rB=parseInt(res.scoreB);
+    const played=res.teamA&&res.teamB&&!isNaN(rA)&&!isNaN(rB);
+    if(!played) continue;
+
+    hasPlayedMatch=true;
+    const pW=!isNaN(pA)&&!isNaN(pB)?(pA>pB?p.teamA:pA<pB?p.teamB:null):null;
+    const rW=rA>rB?res.teamA:rA<rB?res.teamB:null;
+    const winOk=pW&&rW&&pW.trim().toLowerCase()===rW.trim().toLowerCase();
+    const exactOk=!isNaN(pA)&&!isNaN(pB)&&pA===rA&&pB===rB;
+
+    if(winOk) total+=bonus;
+    if(exactOk) total+=bonus;
+  }
+
+  return hasPlayedMatch?total:null;
+}
+
 function groupMatchPts(p,r){
   if(!p||!r||r.home===""||r.away===""||p.home===""||p.away==="") return null;
   const ph=parseInt(p.home),pa=parseInt(p.away),rh=parseInt(r.home),ra=parseInt(r.away);
@@ -581,10 +609,15 @@ function FillView({name,setName,preds,setF,setTop,submit,saved,autoSlots,results
               ✅ Esta ronda ya está cargada con los partidos oficiales de la Eliminatoria de 32.
             </div>
           )}
+          {r.id!=="r32"&&(
+            <div style={{background:"rgba(0,0,0,0.03)",borderRadius:12,border:`1.5px dashed ${c.gray200}`,padding:"14px 16px",marginBottom:20,textAlign:"center",color:c.gray600,fontSize:13,fontWeight:700}}>
+              🔒 Esta ronda aún no se puede rellenar. Por ahora solo está habilitada la Ronda de 32.
+            </div>
+          )}
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:12,marginBottom:28}}>
             {Array.from({length:r.count},(_,i)=>{
               const auto=autoSlots[`${r.id}_${i}`]||{};
-              return <KOCard key={i} rid={r.id} idx={i} preds={preds} setF={setF} autoA={auto.teamA} autoB={auto.teamB}/>;
+              return <KOCard key={i} rid={r.id} idx={i} preds={preds} setF={setF} autoA={auto.teamA} autoB={auto.teamB} editable={r.id==="r32"}/>;
             })}
           </div>
         </div>
@@ -592,7 +625,10 @@ function FillView({name,setName,preds,setF,setTop,submit,saved,autoSlots,results
 
       {/* Campeón y Goleador */}
       <SectionTitle icon="🏆" label="Final &amp; Campeón" badge="19 Jul · New York / New Jersey"/>
-      <ChampCard preds={preds} setTop={setTop}/>
+      <div style={{background:"rgba(0,0,0,0.03)",borderRadius:12,border:`1.5px dashed ${c.gray200}`,padding:"14px 16px",marginBottom:20,textAlign:"center",color:c.gray600,fontSize:13,fontWeight:700}}>
+        🔒 La final, campeón y goleador se habilitarán después. Por ahora solo está habilitada la Ronda de 32.
+      </div>
+      <ChampCard preds={preds} setTop={setTop} editable={false}/>
 
       {/* Submit Action */}
       <div style={{textAlign:"center",marginTop:40,paddingTop:24,borderTop:`2px solid ${c.gray100}`}}>
@@ -719,10 +755,11 @@ function GroupCard({g,preds,setF,standings,results,lockResults}){
   );
 }
 
-function KOCard({rid,idx,preds,setF,autoA,autoB}){
+function KOCard({rid,idx,preds,setF,autoA,autoB,editable}){
   const k=`${rid}_${idx}`,p=preds[k]||{};
   const valA=autoA||p.teamA||"",valB=autoB||p.teamB||"";
   const resolvedA=!!autoA,resolvedB=!!autoB;
+  const locked=!editable;
   const sA=parseInt(p.scoreA),sB=parseInt(p.scoreB);
   const hasScore=!isNaN(sA)&&!isNaN(sB)&&p.scoreA!==""&&p.scoreB!=="";
   const winA=hasScore&&sA>sB,winB=hasScore&&sB>sA;
@@ -750,8 +787,9 @@ function KOCard({rid,idx,preds,setF,autoA,autoB}){
             type="text" 
             placeholder="Equipo A" 
             value={valA} 
-            readOnly={resolvedA} 
-            onChange={e=>{if(!resolvedA)setF(k,"teamA",e.target.value);}}
+            readOnly={resolvedA||locked} 
+            disabled={locked}
+            onChange={e=>{if(!resolvedA&&!locked)setF(k,"teamA",e.target.value);}}
           />
           <input 
             className="quiniela-input-num"
@@ -760,6 +798,9 @@ function KOCard({rid,idx,preds,setF,autoA,autoB}){
             max={20} 
             value={p.scoreA||""} 
             placeholder="0" 
+            readOnly={locked}
+            disabled={locked}
+            style={locked?{opacity:0.55,cursor:"not-allowed",background:c.gray50}:undefined}
             onChange={e=>setF(k,"scoreA",e.target.value)}
           />
         </div>
@@ -780,8 +821,9 @@ function KOCard({rid,idx,preds,setF,autoA,autoB}){
             type="text" 
             placeholder="Equipo B" 
             value={valB} 
-            readOnly={resolvedB} 
-            onChange={e=>{if(!resolvedB)setF(k,"teamB",e.target.value);}}
+            readOnly={resolvedB||locked} 
+            disabled={locked}
+            onChange={e=>{if(!resolvedB&&!locked)setF(k,"teamB",e.target.value);}}
           />
           <input 
             className="quiniela-input-num"
@@ -790,6 +832,9 @@ function KOCard({rid,idx,preds,setF,autoA,autoB}){
             max={20} 
             value={p.scoreB||""} 
             placeholder="0" 
+            readOnly={locked}
+            disabled={locked}
+            style={locked?{opacity:0.55,cursor:"not-allowed",background:c.gray50}:undefined}
             onChange={e=>setF(k,"scoreB",e.target.value)}
           />
         </div>
@@ -798,7 +843,7 @@ function KOCard({rid,idx,preds,setF,autoA,autoB}){
   );
 }
 
-function ChampCard({preds,setTop}){
+function ChampCard({preds,setTop,editable}){
   return (
     <div style={{
       background:`linear-gradient(135deg, ${c.primary}, #061a0d)`,
@@ -828,15 +873,19 @@ function ChampCard({preds,setTop}){
                 className="quiniela-input-text"
                 style={{
                   width:170,
-                  background:"rgba(255,255,255,0.08)",
+                  background:editable?"rgba(255,255,255,0.08)":"rgba(255,255,255,0.04)",
                   border:`2px solid rgba(245,197,24,0.3)`,
                   color:"white",
                   fontSize:13,
                   fontWeight:700,
-                  textAlign:"center"
+                  textAlign:"center",
+                  opacity:editable?1:0.6,
+                  cursor:editable?"text":"not-allowed"
                 }} 
                 placeholder="Escribe el país..." 
                 value={preds[f]||""} 
+                readOnly={!editable}
+                disabled={!editable}
                 onChange={e=>setTop(f,e.target.value)}
               />
             </div>
@@ -844,23 +893,27 @@ function ChampCard({preds,setTop}){
               <div style={{display:"flex",alignItems:"center",gap:8, marginTop:4}}>
                 <input 
                   className="quiniela-input-num"
-                  style={{width:48,height:40,background:"rgba(255,255,255,.08)",border:`1.5px solid rgba(245,197,24,.3)`,fontSize:18,color:c.accent}} 
+                  style={{width:48,height:40,background:editable?"rgba(255,255,255,.08)":"rgba(255,255,255,.04)",border:`1.5px solid rgba(245,197,24,.3)`,fontSize:18,color:c.accent,opacity:editable?1:0.6,cursor:editable?"text":"not-allowed"}} 
                   type="number" 
                   min={0} 
                   max={20} 
                   value={preds.finalScoreA||""} 
                   placeholder="0" 
+                  readOnly={!editable}
+                  disabled={!editable}
                   onChange={e=>setTop("finalScoreA",e.target.value)}
                 />
                 <span style={{color:"rgba(255,255,255,.4)",fontSize:20,fontWeight:800}}>–</span>
                 <input 
                   className="quiniela-input-num"
-                  style={{width:48,height:40,background:"rgba(255,255,255,.08)",border:`1.5px solid rgba(245,197,24,.3)`,fontSize:18,color:c.accent}} 
+                  style={{width:48,height:40,background:editable?"rgba(255,255,255,.08)":"rgba(255,255,255,.04)",border:`1.5px solid rgba(245,197,24,.3)`,fontSize:18,color:c.accent,opacity:editable?1:0.6,cursor:editable?"text":"not-allowed"}} 
                   type="number" 
                   min={0} 
                   max={20} 
                   value={preds.finalScoreB||""} 
                   placeholder="0" 
+                  readOnly={!editable}
+                  disabled={!editable}
                   onChange={e=>setTop("finalScoreB",e.target.value)}
                 />
               </div>
@@ -875,15 +928,19 @@ function ChampCard({preds,setTop}){
           className="quiniela-input-text"
           style={{
             width:220,
-            background:"rgba(255,255,255,0.08)",
+            background:editable?"rgba(255,255,255,0.08)":"rgba(255,255,255,0.04)",
             border:`2px solid rgba(245,197,24,0.3)`,
             color:"white",
             fontSize:13,
             fontWeight:700,
-            textAlign:"center"
+            textAlign:"center",
+            opacity:editable?1:0.6,
+            cursor:editable?"text":"not-allowed"
           }} 
           placeholder="Nombre del jugador..." 
           value={preds.topScorer||""} 
+          readOnly={!editable}
+          disabled={!editable}
           onChange={e=>setTop("topScorer",e.target.value)}
         />
       </div>
@@ -1271,6 +1328,10 @@ function LeaderboardTab({scores,results}){
     </div>
   );
   const medals=["🥇","🥈","🥉"];
+  const round32Scores=[...scores]
+    .map(s=>({...s,r32Pts:scoreKnockoutRound(s.predictions,results,"r32")}))
+    .filter(s=>s.r32Pts!==null)
+    .sort((a,b)=>(b.r32Pts||0)-(a.r32Pts||0)||new Date(a.submitted_at)-new Date(b.submitted_at));
   
   return (
     <div>
@@ -1377,6 +1438,66 @@ function LeaderboardTab({scores,results}){
           </div>
         ))}
       </div>
+
+      <div style={{fontWeight:900,fontSize:20,color:c.primaryMid,marginTop:28,marginBottom:16, fontFamily:"var(--font-heading)"}}>Ronda de 32</div>
+      {round32Scores.length===0 ? (
+        <div className="quiniela-card" style={{textAlign:"center",padding:"32px 20px",color:c.gray400,fontWeight:700}}>
+          Aun no hay resultados cargados para puntuar la Ronda de 32.
+        </div>
+      ) : (
+        <div className="quiniela-card" style={{overflow:"hidden"}}>
+          {round32Scores.map((s,i)=>(
+            <div
+              key={`r32-${s.id}`}
+              className="standing-row"
+              style={{
+                display:"flex",
+                alignItems:"center",
+                gap:14,
+                padding:"12px 20px",
+                background:i===0?"rgba(245,197,24,0.06)":i===1?"rgba(200,207,191,0.08)":"white",
+                borderBottom:`1px solid ${c.gray100}`
+              }}
+            >
+              <div style={{
+                width:30,
+                height:30,
+                borderRadius:"50%",
+                display:"flex",
+                alignItems:"center",
+                justifyContent:"center",
+                fontWeight:900,
+                fontSize:13,
+                background:i===0?c.accent:i===1?"#cfd8dc":i===2?"#d7ccc8":c.gray100,
+                color:i<3?c.primary:c.gray600,
+                flexShrink:0,
+                boxShadow: i<3 ? "0 2px 5px rgba(0,0,0,0.1)" : "none",
+                border: i<3 ? "1.5px solid white" : "none"
+              }}>
+                {i<3?medals[i]:i+1}
+              </div>
+
+              <div style={{flex:1,fontWeight:800,fontSize:14, color:c.ink}}>{s.name}</div>
+
+              <div style={{fontSize:11,color:c.gray400, fontWeight:500}}>
+                Solo R32
+              </div>
+
+              <div style={{
+                background:i===0?c.accent:i===1?c.gray100:c.gray50,
+                color:i===0?c.primary:c.primaryMid,
+                fontWeight:900,
+                fontSize:13,
+                padding:"6px 14px",
+                borderRadius:8,
+                border: i===0 ? `1px solid rgba(245,197,24,0.5)` : `1px solid ${c.gray200}`
+              }}>
+                {s.r32Pts??0} pt
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
